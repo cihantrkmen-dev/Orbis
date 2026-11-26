@@ -75,8 +75,8 @@ jobs:
                   applicationId = "com.ogm.geoportalmobile"
                   minSdk = 24
                   targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0.0"
+                  versionCode = 2
+                  versionName = "1.1.0"
               }
 
               buildTypes {
@@ -151,10 +151,8 @@ jobs:
 
           import android.Manifest
           import android.annotation.SuppressLint
-          import android.content.ClipData
-          import android.content.ClipboardManager
-          import android.content.Context
           import android.content.pm.PackageManager
+          import android.graphics.Bitmap
           import android.graphics.Color
           import android.graphics.drawable.GradientDrawable
           import android.location.Location
@@ -187,6 +185,7 @@ jobs:
               private lateinit var btnFullscreen: Button
               private lateinit var btnGpsToggle: Button
               private lateinit var btnFollowLock: Button
+              private lateinit var fabGpsCenter: TextView
 
               private lateinit var fusedLocationClient: FusedLocationProviderClient
               private var locationCallback: LocationCallback? = null
@@ -194,6 +193,7 @@ jobs:
               private var isFullscreenMode = true
               private var isGpsActive = false
               private var isFollowLocked = true
+              private var lastLocation: Location? = null
               private var lastBackPressTime = 0L
 
               @SuppressLint("SetJavaScriptEnabled")
@@ -253,19 +253,19 @@ jobs:
                   }
                   root.addView(progressBar)
 
-                  // Alt GPS bilgi şeridi (yalnızca GPS açıkken görünür)
+                  // Alt GPS bilgi şeridi
                   gpsBar = TextView(this).apply {
                       layoutParams = FrameLayout.LayoutParams(
                           FrameLayout.LayoutParams.WRAP_CONTENT,
                           FrameLayout.LayoutParams.WRAP_CONTENT,
                           Gravity.BOTTOM or Gravity.START
                       ).apply {
-                          setMargins(dp(10), 0, dp(70), dp(12))
+                          setMargins(dp(10), 0, dp(130), dp(12))
                       }
                       background = roundedBg("#CC101820", 10, "#44FFFFFF")
                       setTextColor(Color.WHITE)
                       setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                      setPadding(dp(12), dp(6), dp(12), dp(6))
+                      setPadding(dp(10), dp(6), dp(10), dp(6))
                       text = "GPS bekleniyor..."
                       visibility = View.GONE
                   }
@@ -279,7 +279,7 @@ jobs:
                           FrameLayout.LayoutParams.WRAP_CONTENT,
                           Gravity.BOTTOM or Gravity.END
                       ).apply {
-                          setMargins(dp(12), dp(12), dp(12), dp(72))
+                          setMargins(dp(12), dp(12), dp(12), dp(74))
                       }
                       background = roundedBg("#EE121A21", 14, "#554CAF50")
                       setPadding(dp(12), dp(12), dp(12), dp(12))
@@ -294,23 +294,19 @@ jobs:
                   }
                   drawerPanel.addView(title)
 
-                  btnFullscreen = createMenuButton("Tam Ekran Modu: AÇIK") {
+                  btnFullscreen = createMenuButton("Tam Ekran Modu: AÇIK", "#2E7D32") {
                       isFullscreenMode = !isFullscreenMode
                       updateMenuLabels()
-                      injectSmartMobileScript()
+                      injectExactOrbisCss()
                   }
                   drawerPanel.addView(btnFullscreen)
 
                   btnGpsToggle = createMenuButton("Canlı GPS Takip: KAPALI") {
-                      if (isGpsActive) {
-                          stopGpsTracking()
-                      } else {
-                          startGpsTracking()
-                      }
+                      if (isGpsActive) stopGpsTracking() else startGpsTracking()
                   }
                   drawerPanel.addView(btnGpsToggle)
 
-                  btnFollowLock = createMenuButton("Haritayı Konuma Kilitle: AÇIK") {
+                  btnFollowLock = createMenuButton("Konuma Kilitle: AÇIK") {
                       isFollowLocked = !isFollowLocked
                       updateMenuLabels()
                   }
@@ -326,11 +322,6 @@ jobs:
                       webView.reload()
                   })
 
-                  drawerPanel.addView(createMenuButton("Arayüz Tarayıcı (DOM Kopyala)") {
-                      drawerPanel.visibility = View.GONE
-                      runDomInspector()
-                  })
-
                   drawerPanel.addView(createMenuButton("Oturumu Kapat", "#B71C1C") {
                       drawerPanel.visibility = View.GONE
                       CookieManager.getInstance().removeAllCookies(null)
@@ -342,14 +333,39 @@ jobs:
 
                   root.addView(drawerPanel)
 
-                  // Haritayı kapatmayan tek dokunuşlu yüzen menü butonu
+                  // Tek dokunuşlu GPS Odaklanma butonu (menü butonunun solunda)
+                  fabGpsCenter = TextView(this).apply {
+                      text = "◎"
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.WHITE)
+                      setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                      background = roundedBg("#DD1565C0", 26, "#88FFFFFF")
+                      layoutParams = FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply {
+                          setMargins(0, 0, dp(68), dp(12))
+                      }
+                      setOnClickListener {
+                          if (!isGpsActive) {
+                              startGpsTracking()
+                          } else {
+                              lastLocation?.let { loc ->
+                                  webView.evaluateJavascript(
+                                      "window.__ogmCenterOnGps && window.__ogmCenterOnGps(${loc.latitude}, ${loc.longitude}, 17);",
+                                      null
+                                  )
+                              } ?: Toast.makeText(this@MainActivity, "GPS sinyali bekleniyor...", Toast.LENGTH_SHORT).show()
+                          }
+                      }
+                  }
+                  root.addView(fabGpsCenter)
+
+                  // Tek dokunuşlu yüzen menü butonu
                   val fabMenu = TextView(this).apply {
                       text = "☰"
                       gravity = Gravity.CENTER
                       setTextColor(Color.WHITE)
                       setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
                       background = roundedBg("#DD1B5E20", 26, "#88FFFFFF")
-                      layoutParams = FrameLayout.LayoutParams(dp(50), dp(50), Gravity.BOTTOM or Gravity.END).apply {
+                      layoutParams = FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply {
                           setMargins(0, 0, dp(12), dp(12))
                       }
                       setOnClickListener {
@@ -385,7 +401,7 @@ jobs:
                   btnGpsToggle.text = if (isGpsActive) "Canlı GPS Takip: AÇIK" else "Canlı GPS Takip: KAPALI"
                   btnGpsToggle.background = roundedBg(if (isGpsActive) "#1565C0" else "#37474F", 8)
 
-                  btnFollowLock.text = if (isFollowLocked) "Haritayı Konuma Kilitle: AÇIK" else "Haritayı Konuma Kilitle: KAPALI"
+                  btnFollowLock.text = if (isFollowLocked) "Konuma Kilitle: AÇIK" else "Konuma Kilitle: KAPALI"
               }
 
               @SuppressLint("SetJavaScriptEnabled")
@@ -407,8 +423,6 @@ jobs:
                       userAgentString = userAgentString.replace("; wv", "")
                   }
 
-                  webView.addJavascriptInterface(AndroidBridge(), "AndroidBridge")
-
                   webView.webChromeClient = object : WebChromeClient() {
                       override fun onGeolocationPermissionsShowPrompt(
                           origin: String?,
@@ -424,15 +438,18 @@ jobs:
                   }
 
                   webView.webViewClient = object : WebViewClient() {
-                      override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                          return false
+                      override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = false
+
+                      override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                          super.onPageStarted(view, url, favicon)
+                          injectLeafletHookAndGps()
                       }
 
                       override fun onPageFinished(view: WebView?, url: String?) {
                           super.onPageFinished(view, url)
                           CookieManager.getInstance().flush()
-                          injectGpsPolyfill()
-                          injectSmartMobileScript()
+                          injectLeafletHookAndGps()
+                          injectExactOrbisCss()
                       }
                   }
               }
@@ -486,6 +503,7 @@ jobs:
                   locationCallback = object : LocationCallback() {
                       override fun onLocationResult(result: LocationResult) {
                           val loc = result.lastLocation ?: return
+                          lastLocation = loc
                           onNewLocation(loc)
                       }
                   }
@@ -513,70 +531,44 @@ jobs:
 
                   gpsBar.text = String.format(
                       Locale.US,
-                      "GPS: %.6f, %.6f | Rakım: %.0fm | ±%.0fm",
+                      "%.6f, %.6f | %.0fm | ±%.0fm",
                       lat, lon, alt, acc
                   )
 
-                  val js = """
-                      (function() {
-                          window.__nativeGps = { lat: $lat, lon: $lon, alt: $alt, acc: $acc, ts: Date.now() };
-                          if (window.__onNativeGpsUpdate) {
-                              window.__onNativeGpsUpdate($lat, $lon, $acc, ${isFollowLocked});
-                          }
-                      })();
-                  """.trimIndent()
+                  val js = "window.__onNativeGpsUpdate && window.__onNativeGpsUpdate($lat, $lon, $acc, $isFollowLocked);"
                   webView.evaluateJavascript(js, null)
               }
 
-              private fun injectGpsPolyfill() {
+              private fun injectLeafletHookAndGps() {
                   val js = """
                       (function() {
-                          if (window.__gpsBridgeReady) return;
-                          window.__gpsBridgeReady = true;
+                          if (window.__ogmLeafletBridge) return;
+                          window.__ogmLeafletBridge = true;
 
-                          function makePos(g) {
-                              return {
-                                  coords: {
-                                      latitude: g.lat,
-                                      longitude: g.lon,
-                                      altitude: g.alt,
-                                      accuracy: g.acc,
-                                      altitudeAccuracy: null,
-                                      heading: null,
-                                      speed: null
-                                  },
-                                  timestamp: g.ts
-                              };
+                          function attachLeafletHook() {
+                              if (window.L && window.L.Map && !window.__ogmLHooked) {
+                                  window.__ogmLHooked = true;
+                                  window.L.Map.addInitHook(function() {
+                                      window.__ogmMap = this;
+                                  });
+                              }
                           }
+                          attachLeafletHook();
+                          const hookTimer = setInterval(() => {
+                              attachLeafletHook();
+                              if (window.__ogmLHooked) clearInterval(hookTimer);
+                          }, 500);
 
-                          const watchers = {};
-                          let watchSeq = 1;
-
-                          if (navigator.geolocation) {
-                              const origGet = navigator.geolocation.getCurrentPosition.bind(navigator.geolocation);
-                              navigator.geolocation.getCurrentPosition = function(ok, err, opt) {
-                                  if (window.__nativeGps) {
-                                      ok(makePos(window.__nativeGps));
-                                  } else {
-                                      origGet(ok, err, opt);
-                                  }
-                              };
-                              navigator.geolocation.watchPosition = function(ok, err, opt) {
-                                  const id = watchSeq++;
-                                  watchers[id] = ok;
-                                  if (window.__nativeGps) ok(makePos(window.__nativeGps));
-                                  return id;
-                              };
-                              navigator.geolocation.clearWatch = function(id) {
-                                  delete watchers[id];
-                              };
-                          }
-
-                          function findOlMap(win) {
+                          function getLeafletMap() {
+                              if (window.__ogmMap && typeof window.__ogmMap.setView === 'function') {
+                                  return window.__ogmMap;
+                              }
+                              // Mevcut Leaflet harita nesnesini tarayarak bul
                               try {
-                                  for (const key of Object.keys(win)) {
-                                      const v = win[key];
-                                      if (v && typeof v === 'object' && typeof v.getView === 'function' && typeof v.getLayers === 'function') {
+                                  for (const k of Object.keys(window)) {
+                                      const v = window[k];
+                                      if (v && typeof v === 'object' && window.L && window.L.Map && (v instanceof window.L.Map)) {
+                                          window.__ogmMap = v;
                                           return v;
                                       }
                                   }
@@ -584,28 +576,42 @@ jobs:
                               return null;
                           }
 
-                          window.__onNativeGpsUpdate = function(lat, lon, acc, shouldFollow) {
-                              const pos = makePos(window.__nativeGps);
-                              Object.values(watchers).forEach(fn => { try { fn(pos); } catch(e) {} });
+                          window.__ogmCenterOnGps = function(lat, lon, zoom) {
+                              const map = getLeafletMap();
+                              if (map) {
+                                  map.setView([lat, lon], zoom || Math.max(map.getZoom(), 16), { animate: true });
+                              }
+                          };
 
-                              if (!shouldFollow) return;
+                          window.__onNativeGpsUpdate = function(lat, lon, acc, shouldFollow) {
+                              const map = getLeafletMap();
+                              if (!map || !window.L) return;
+
                               try {
-                                  let targetWin = window;
-                                  let olMap = findOlMap(window);
-                                  if (!olMap) {
-                                      const frames = document.querySelectorAll('iframe');
-                                      for (const f of frames) {
-                                          try {
-                                              olMap = findOlMap(f.contentWindow);
-                                              if (olMap) { targetWin = f.contentWindow; break; }
-                                          } catch(e) {}
-                                      }
+                                  if (!window.__ogmGpsMarker) {
+                                      window.__ogmGpsCircle = window.L.circle([lat, lon], {
+                                          radius: Math.max(acc, 5),
+                                          color: '#2196F3',
+                                          fillColor: '#2196F3',
+                                          fillOpacity: 0.15,
+                                          weight: 1
+                                      }).addTo(map);
+
+                                      window.__ogmGpsMarker = window.L.circleMarker([lat, lon], {
+                                          radius: 8,
+                                          color: '#FFFFFF',
+                                          fillColor: '#1E88E5',
+                                          fillOpacity: 1,
+                                          weight: 3
+                                      }).addTo(map);
+                                  } else {
+                                      window.__ogmGpsMarker.setLatLng([lat, lon]);
+                                      window.__ogmGpsCircle.setLatLng([lat, lon]);
+                                      window.__ogmGpsCircle.setRadius(Math.max(acc, 5));
                                   }
-                                  if (olMap && targetWin.ol && targetWin.ol.proj) {
-                                      const view = olMap.getView();
-                                      const proj = view.getProjection() ? view.getProjection().getCode() : 'EPSG:3857';
-                                      const coord = targetWin.ol.proj.transform([lon, lat], 'EPSG:4326', proj);
-                                      view.setCenter(coord);
+
+                                  if (shouldFollow) {
+                                      map.panTo([lat, lon], { animate: true });
                                   }
                               } catch(e) {}
                           };
@@ -614,117 +620,66 @@ jobs:
                   webView.evaluateJavascript(js, null)
               }
 
-              private fun injectSmartMobileScript() {
+              private fun injectExactOrbisCss() {
                   val enabled = isFullscreenMode
                   val js = """
                       (function() {
-                          window.__ogmFullscreenEnabled = $enabled;
+                          const styleId = 'ogm-exact-mobile-css';
+                          let style = document.getElementById(styleId);
 
-                          function applyLayout() {
-                              // Giriş ekranındaysak hiçbir şeyi gizleme
-                              if (document.querySelector('input[type="password"]')) return;
+                          // Giriş ekranındaysak müdahale etme
+                          if (document.querySelector('input[type="password"]')) {
+                              if (style) style.remove();
+                              return;
+                          }
 
-                              const styleId = 'ogm-mobile-style';
-                              let style = document.getElementById(styleId);
-                              if (!window.__ogmFullscreenEnabled) {
-                                  if (style) style.remove();
-                                  document.querySelectorAll('[data-ogm-hidden="1"]').forEach(el => {
-                                      el.style.display = '';
-                                      el.removeAttribute('data-ogm-hidden');
-                                  });
-                                  window.dispatchEvent(new Event('resize'));
-                                  return;
-                              }
-
-                              if (!style) {
-                                  style = document.createElement('style');
-                                  style.id = styleId;
-                                  style.textContent = `
-                                      button, .x-btn, .ol-control button, [role="button"], .toolbar img {
-                                          min-width: 38px !important;
-                                          min-height: 38px !important;
-                                      }
-                                      .x-menu-item-text, .x-tree-node-text, label {
-                                          font-size: 14px !important;
-                                      }
-                                  `;
-                                  document.head.appendChild(style);
-                              }
-
-                              // Harita canvas veya iframe alanını bul
-                              const candidates = Array.from(document.querySelectorAll('canvas, iframe'));
-                              let mapEl = null;
-                              let maxArea = 0;
-                              candidates.forEach(el => {
-                                  const r = el.getBoundingClientRect();
-                                  const area = r.width * r.height;
-                                  if (area > maxArea && r.width > 200 && r.height > 200) {
-                                      maxArea = area;
-                                      mapEl = el;
-                                  }
-                              });
-
-                              if (!mapEl) return;
-
-                              // Sol ORBİS ana menüsü ve üst mavi başlık barını sezgisel olarak gizle
-                              const allBlocks = document.querySelectorAll('nav, aside, header, div');
-                              allBlocks.forEach(el => {
-                                  if (el.contains(mapEl) || mapEl.contains(el)) return;
-                                  const r = el.getBoundingClientRect();
-                                  if (r.width === 0 || r.height === 0) return;
-
-                                  const isLeftSidebar = (r.left <= 5 && r.width > 120 && r.width < 340 && r.height > window.innerHeight * 0.6);
-                                  const isTopHeader = (r.top <= 5 && r.height > 25 && r.height < 95 && r.width > window.innerWidth * 0.7);
-
-                                  if (isLeftSidebar || isTopHeader) {
-                                      el.style.display = 'none';
-                                      el.setAttribute('data-ogm-hidden', '1');
-                                  }
-                              });
-
+                          if (!$enabled) {
+                              if (style) style.remove();
                               window.dispatchEvent(new Event('resize'));
+                              if (window.__ogmMap && window.__ogmMap.invalidateSize) window.__ogmMap.invalidateSize();
+                              return;
                           }
 
-                          applyLayout();
-                          setTimeout(applyLayout, 1500);
-                          setTimeout(applyLayout, 3500);
-
-                          if (!window.__ogmObserverAttached) {
-                              window.__ogmObserverAttached = true;
-                              window.addEventListener('hashchange', () => setTimeout(applyLayout, 1200));
+                          if (!style) {
+                              style = document.createElement('style');
+                              style.id = styleId;
+                              document.head.appendChild(style);
                           }
+
+                          style.textContent = `
+                              #headerbar, #sidebar, #menu-toggler {
+                                  display: none !important;
+                              }
+                              #maincontainer, .main-container, .main-content, .main-content-inner, .page-content {
+                                  margin-left: 0 !important;
+                                  padding-left: 0 !important;
+                                  padding-top: 0 !important;
+                                  padding-right: 0 !important;
+                                  padding-bottom: 0 !important;
+                                  top: 0 !important;
+                                  width: 100vw !important;
+                              }
+                              .leaflet-container {
+                                  width: 100vw !important;
+                                  height: 100vh !important;
+                              }
+                              .leaflet-bar a, .leaflet-control button {
+                                  width: 40px !important;
+                                  height: 40px !important;
+                                  line-height: 40px !important;
+                                  font-size: 18px !important;
+                              }
+                          `;
+
+                          setTimeout(() => {
+                              window.dispatchEvent(new Event('resize'));
+                              if (window.__ogmMap && window.__ogmMap.invalidateSize) {
+                                  window.__ogmMap.invalidateSize();
+                              }
+                          }, 400);
                       })();
                   """.trimIndent()
                   webView.evaluateJavascript(js, null)
-              }
-
-              private fun runDomInspector() {
-                  val js = """
-                      (function() {
-                          const info = {
-                              url: window.location.href,
-                              iframes: Array.from(document.querySelectorAll('iframe')).map(f => ({ id: f.id, cls: f.className, src: f.src })),
-                              canvases: Array.from(document.querySelectorAll('canvas')).map(c => ({ id: c.id, cls: c.className, w: c.width, h: c.height })),
-                              hasOL: typeof window.ol !== 'undefined',
-                              hasLeaflet: typeof window.L !== 'undefined',
-                              hasExt: typeof window.Ext !== 'undefined',
-                              topIds: Array.from(document.querySelectorAll('[id]')).slice(0, 40).map(e => e.tagName + '#' + e.id + '.' + e.className)
-                          };
-                          AndroidBridge.onDomReport(JSON.stringify(info, null, 2));
-                      })();
-                  """.trimIndent()
-                  webView.evaluateJavascript(js, null)
-              }
-
-              inner class AndroidBridge {
-                  @JavascriptInterface
-                  fun onDomReport(report: String) {
-                      runOnUiThread {
-                          val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                          clipboard.setPrimaryClip(ClipData.newPlainText("OGM_DOM_Report", report))
-                          Toast.makeText(this@MainActivity, "Arayüz raporu panoya kopyalandı.", Toast.LENGTH_LONG).show()
-                      }
-                  }
               }
 
               override fun onPause() {
@@ -745,5 +700,5 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OGM-Geoportal-Mobile-v1.0
+          name: OGM-Geoportal-Mobile-v1.1
           path: app/build/outputs/apk/debug/app-debug.apk
