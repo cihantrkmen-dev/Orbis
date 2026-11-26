@@ -1,0 +1,749 @@
+name: Build OGM Geoportal Mobile APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Generate Android Project Files
+        run: |
+          mkdir -p app/src/main/java/com/ogm/geoportalmobile
+          mkdir -p app/src/main/res/drawable
+
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "OgmGeoportalMobile"
+          include(":app")
+          EOF
+
+          cat << 'EOF' > gradle.properties
+          android.useAndroidX=true
+          android.enableJetifier=false
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          EOF
+
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.5.0" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.ogm.geoportalmobile"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.ogm.geoportalmobile"
+                  minSdk = 24
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.appcompat:appcompat:1.7.0")
+              implementation("com.google.android.gms:play-services-location:21.3.0")
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/res/drawable/ic_launcher.xml
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#1B5E20" android:pathData="M0,0h108v108h-108z"/>
+              <path android:fillColor="#FFFFFF" android:pathData="M54,22 L32,62 L44,62 L36,80 L72,80 L64,62 L76,62 Z"/>
+              <path android:fillColor="#A5D6A7" android:pathData="M50,80 h8 v10 h-8 z"/>
+          </vector>
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+              <application
+                  android:allowBackup="true"
+                  android:hardwareAccelerated="true"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="OGM Geoportal"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.AppCompat.NoActionBar"
+                  android:usesCleartextTraffic="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:configChanges="orientation|screenSize|keyboardHidden"
+                      android:exported="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/ogm/geoportalmobile/MainActivity.kt
+          package com.ogm.geoportalmobile
+
+          import android.Manifest
+          import android.annotation.SuppressLint
+          import android.content.ClipData
+          import android.content.ClipboardManager
+          import android.content.Context
+          import android.content.pm.PackageManager
+          import android.graphics.Color
+          import android.graphics.drawable.GradientDrawable
+          import android.location.Location
+          import android.os.Bundle
+          import android.os.Looper
+          import android.util.TypedValue
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.webkit.*
+          import android.widget.*
+          import androidx.activity.OnBackPressedCallback
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.app.ActivityCompat
+          import androidx.core.content.ContextCompat
+          import com.google.android.gms.location.*
+          import java.util.Locale
+
+          class MainActivity : AppCompatActivity() {
+
+              companion object {
+                  private const val GEOPORTAL_URL = "https://orbis.ogm.gov.tr/orbis/#geoportal/geo_geoportal"
+                  private const val LOCATION_PERMISSION_CODE = 1001
+              }
+
+              private lateinit var webView: WebView
+              private lateinit var progressBar: ProgressBar
+              private lateinit var gpsBar: TextView
+              private lateinit var drawerPanel: LinearLayout
+              private lateinit var btnFullscreen: Button
+              private lateinit var btnGpsToggle: Button
+              private lateinit var btnFollowLock: Button
+
+              private lateinit var fusedLocationClient: FusedLocationProviderClient
+              private var locationCallback: LocationCallback? = null
+
+              private var isFullscreenMode = true
+              private var isGpsActive = false
+              private var isFollowLocked = true
+              private var lastBackPressTime = 0L
+
+              @SuppressLint("SetJavaScriptEnabled")
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+                  setupUi()
+                  setupWebView()
+                  setupBackNavigation()
+
+                  requestLocationPermissionsIfNeeded()
+                  webView.loadUrl(GEOPORTAL_URL)
+              }
+
+              private fun dp(value: Int): Int = TypedValue.applyDimension(
+                  TypedValue.COMPLEX_UNIT_DIP,
+                  value.toFloat(),
+                  resources.displayMetrics
+              ).toInt()
+
+              private fun roundedBg(colorHex: String, radiusDp: Int, strokeColorHex: String? = null): GradientDrawable {
+                  return GradientDrawable().apply {
+                      setColor(Color.parseColor(colorHex))
+                      cornerRadius = dp(radiusDp).toFloat()
+                      if (strokeColorHex != null) {
+                          setStroke(dp(1), Color.parseColor(strokeColorHex))
+                      }
+                  }
+              }
+
+              private fun setupUi() {
+                  val root = FrameLayout(this).apply {
+                      layoutParams = ViewGroup.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT,
+                          ViewGroup.LayoutParams.MATCH_PARENT
+                      )
+                      setBackgroundColor(Color.BLACK)
+                  }
+
+                  webView = WebView(this).apply {
+                      layoutParams = FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.MATCH_PARENT,
+                          FrameLayout.LayoutParams.MATCH_PARENT
+                      )
+                  }
+                  root.addView(webView)
+
+                  progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                      layoutParams = FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.MATCH_PARENT,
+                          dp(3),
+                          Gravity.TOP
+                      )
+                      max = 100
+                      visibility = View.GONE
+                  }
+                  root.addView(progressBar)
+
+                  // Alt GPS bilgi şeridi (yalnızca GPS açıkken görünür)
+                  gpsBar = TextView(this).apply {
+                      layoutParams = FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.WRAP_CONTENT,
+                          FrameLayout.LayoutParams.WRAP_CONTENT,
+                          Gravity.BOTTOM or Gravity.START
+                      ).apply {
+                          setMargins(dp(10), 0, dp(70), dp(12))
+                      }
+                      background = roundedBg("#CC101820", 10, "#44FFFFFF")
+                      setTextColor(Color.WHITE)
+                      setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                      setPadding(dp(12), dp(6), dp(12), dp(6))
+                      text = "GPS bekleniyor..."
+                      visibility = View.GONE
+                  }
+                  root.addView(gpsBar)
+
+                  // Açılır/kapanır saha kontrol çekmecesi
+                  drawerPanel = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      layoutParams = FrameLayout.LayoutParams(
+                          dp(230),
+                          FrameLayout.LayoutParams.WRAP_CONTENT,
+                          Gravity.BOTTOM or Gravity.END
+                      ).apply {
+                          setMargins(dp(12), dp(12), dp(12), dp(72))
+                      }
+                      background = roundedBg("#EE121A21", 14, "#554CAF50")
+                      setPadding(dp(12), dp(12), dp(12), dp(12))
+                      visibility = View.GONE
+                  }
+
+                  val title = TextView(this).apply {
+                      text = "OGM Geoportal Saha Paneli"
+                      setTextColor(Color.parseColor("#A5D6A7"))
+                      setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                      setPadding(dp(4), 0, dp(4), dp(8))
+                  }
+                  drawerPanel.addView(title)
+
+                  btnFullscreen = createMenuButton("Tam Ekran Modu: AÇIK") {
+                      isFullscreenMode = !isFullscreenMode
+                      updateMenuLabels()
+                      injectSmartMobileScript()
+                  }
+                  drawerPanel.addView(btnFullscreen)
+
+                  btnGpsToggle = createMenuButton("Canlı GPS Takip: KAPALI") {
+                      if (isGpsActive) {
+                          stopGpsTracking()
+                      } else {
+                          startGpsTracking()
+                      }
+                  }
+                  drawerPanel.addView(btnGpsToggle)
+
+                  btnFollowLock = createMenuButton("Haritayı Konuma Kilitle: AÇIK") {
+                      isFollowLocked = !isFollowLocked
+                      updateMenuLabels()
+                  }
+                  drawerPanel.addView(btnFollowLock)
+
+                  drawerPanel.addView(createMenuButton("Geoportal'a Git") {
+                      drawerPanel.visibility = View.GONE
+                      webView.loadUrl(GEOPORTAL_URL)
+                  })
+
+                  drawerPanel.addView(createMenuButton("Sayfayı Yenile") {
+                      drawerPanel.visibility = View.GONE
+                      webView.reload()
+                  })
+
+                  drawerPanel.addView(createMenuButton("Arayüz Tarayıcı (DOM Kopyala)") {
+                      drawerPanel.visibility = View.GONE
+                      runDomInspector()
+                  })
+
+                  drawerPanel.addView(createMenuButton("Oturumu Kapat", "#B71C1C") {
+                      drawerPanel.visibility = View.GONE
+                      CookieManager.getInstance().removeAllCookies(null)
+                      CookieManager.getInstance().flush()
+                      webView.clearCache(true)
+                      webView.loadUrl(GEOPORTAL_URL)
+                      Toast.makeText(this, "Oturum kapatıldı.", Toast.LENGTH_SHORT).show()
+                  })
+
+                  root.addView(drawerPanel)
+
+                  // Haritayı kapatmayan tek dokunuşlu yüzen menü butonu
+                  val fabMenu = TextView(this).apply {
+                      text = "☰"
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.WHITE)
+                      setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                      background = roundedBg("#DD1B5E20", 26, "#88FFFFFF")
+                      layoutParams = FrameLayout.LayoutParams(dp(50), dp(50), Gravity.BOTTOM or Gravity.END).apply {
+                          setMargins(0, 0, dp(12), dp(12))
+                      }
+                      setOnClickListener {
+                          drawerPanel.visibility = if (drawerPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                      }
+                  }
+                  root.addView(fabMenu)
+
+                  setContentView(root)
+              }
+
+              private fun createMenuButton(label: String, bgHex: String = "#263238", onClick: () -> Unit): Button {
+                  return Button(this).apply {
+                      text = label
+                      isAllCaps = false
+                      setTextColor(Color.WHITE)
+                      setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                      background = roundedBg(bgHex, 8)
+                      layoutParams = LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT,
+                          dp(40)
+                      ).apply {
+                          setMargins(0, dp(4), 0, dp(4))
+                      }
+                      setOnClickListener { onClick() }
+                  }
+              }
+
+              private fun updateMenuLabels() {
+                  btnFullscreen.text = if (isFullscreenMode) "Tam Ekran Modu: AÇIK" else "Tam Ekran Modu: KAPALI"
+                  btnFullscreen.background = roundedBg(if (isFullscreenMode) "#2E7D32" else "#37474F", 8)
+
+                  btnGpsToggle.text = if (isGpsActive) "Canlı GPS Takip: AÇIK" else "Canlı GPS Takip: KAPALI"
+                  btnGpsToggle.background = roundedBg(if (isGpsActive) "#1565C0" else "#37474F", 8)
+
+                  btnFollowLock.text = if (isFollowLocked) "Haritayı Konuma Kilitle: AÇIK" else "Haritayı Konuma Kilitle: KAPALI"
+              }
+
+              @SuppressLint("SetJavaScriptEnabled")
+              private fun setupWebView() {
+                  val cookieManager = CookieManager.getInstance()
+                  cookieManager.setAcceptCookie(true)
+                  cookieManager.setAcceptThirdPartyCookies(webView, true)
+
+                  webView.settings.apply {
+                      javaScriptEnabled = true
+                      domStorageEnabled = true
+                      databaseEnabled = true
+                      setGeolocationEnabled(true)
+                      useWideViewPort = true
+                      loadWithOverviewMode = true
+                      builtInZoomControls = true
+                      displayZoomControls = false
+                      mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                      userAgentString = userAgentString.replace("; wv", "")
+                  }
+
+                  webView.addJavascriptInterface(AndroidBridge(), "AndroidBridge")
+
+                  webView.webChromeClient = object : WebChromeClient() {
+                      override fun onGeolocationPermissionsShowPrompt(
+                          origin: String?,
+                          callback: GeolocationPermissions.Callback?
+                      ) {
+                          callback?.invoke(origin, true, false)
+                      }
+
+                      override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                          progressBar.visibility = if (newProgress < 100) View.VISIBLE else View.GONE
+                          progressBar.progress = newProgress
+                      }
+                  }
+
+                  webView.webViewClient = object : WebViewClient() {
+                      override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                          return false
+                      }
+
+                      override fun onPageFinished(view: WebView?, url: String?) {
+                          super.onPageFinished(view, url)
+                          CookieManager.getInstance().flush()
+                          injectGpsPolyfill()
+                          injectSmartMobileScript()
+                      }
+                  }
+              }
+
+              private fun setupBackNavigation() {
+                  onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+                      override fun handleOnBackPressed() {
+                          if (drawerPanel.visibility == View.VISIBLE) {
+                              drawerPanel.visibility = View.GONE
+                              return
+                          }
+                          if (webView.canGoBack()) {
+                              webView.goBack()
+                          } else {
+                              val now = System.currentTimeMillis()
+                              if (now - lastBackPressTime < 2000) {
+                                  finish()
+                              } else {
+                                  lastBackPressTime = now
+                                  Toast.makeText(this@MainActivity, "Çıkmak için tekrar geri basın", Toast.LENGTH_SHORT).show()
+                              }
+                          }
+                      }
+                  })
+              }
+
+              private fun requestLocationPermissionsIfNeeded(): Boolean {
+                  val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                  if (fine != PackageManager.PERMISSION_GRANTED) {
+                      ActivityCompat.requestPermissions(
+                          this,
+                          arrayOf(
+                              Manifest.permission.ACCESS_FINE_LOCATION,
+                              Manifest.permission.ACCESS_COARSE_LOCATION
+                          ),
+                          LOCATION_PERMISSION_CODE
+                      )
+                      return false
+                  }
+                  return true
+              }
+
+              @SuppressLint("MissingPermission")
+              private fun startGpsTracking() {
+                  if (!requestLocationPermissionsIfNeeded()) return
+
+                  val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1500L)
+                      .setMinUpdateIntervalMillis(1000L)
+                      .build()
+
+                  locationCallback = object : LocationCallback() {
+                      override fun onLocationResult(result: LocationResult) {
+                          val loc = result.lastLocation ?: return
+                          onNewLocation(loc)
+                      }
+                  }
+
+                  fusedLocationClient.requestLocationUpdates(request, locationCallback!!, Looper.getMainLooper())
+                  isGpsActive = true
+                  gpsBar.visibility = View.VISIBLE
+                  updateMenuLabels()
+                  Toast.makeText(this, "Canlı GPS takibi başlatıldı", Toast.LENGTH_SHORT).show()
+              }
+
+              private fun stopGpsTracking() {
+                  locationCallback?.let { fusedLocationClient.removeLocationUpdates(it) }
+                  locationCallback = null
+                  isGpsActive = false
+                  gpsBar.visibility = View.GONE
+                  updateMenuLabels()
+              }
+
+              private fun onNewLocation(loc: Location) {
+                  val lat = loc.latitude
+                  val lon = loc.longitude
+                  val alt = loc.altitude
+                  val acc = loc.accuracy
+
+                  gpsBar.text = String.format(
+                      Locale.US,
+                      "GPS: %.6f, %.6f | Rakım: %.0fm | ±%.0fm",
+                      lat, lon, alt, acc
+                  )
+
+                  val js = """
+                      (function() {
+                          window.__nativeGps = { lat: $lat, lon: $lon, alt: $alt, acc: $acc, ts: Date.now() };
+                          if (window.__onNativeGpsUpdate) {
+                              window.__onNativeGpsUpdate($lat, $lon, $acc, ${isFollowLocked});
+                          }
+                      })();
+                  """.trimIndent()
+                  webView.evaluateJavascript(js, null)
+              }
+
+              private fun injectGpsPolyfill() {
+                  val js = """
+                      (function() {
+                          if (window.__gpsBridgeReady) return;
+                          window.__gpsBridgeReady = true;
+
+                          function makePos(g) {
+                              return {
+                                  coords: {
+                                      latitude: g.lat,
+                                      longitude: g.lon,
+                                      altitude: g.alt,
+                                      accuracy: g.acc,
+                                      altitudeAccuracy: null,
+                                      heading: null,
+                                      speed: null
+                                  },
+                                  timestamp: g.ts
+                              };
+                          }
+
+                          const watchers = {};
+                          let watchSeq = 1;
+
+                          if (navigator.geolocation) {
+                              const origGet = navigator.geolocation.getCurrentPosition.bind(navigator.geolocation);
+                              navigator.geolocation.getCurrentPosition = function(ok, err, opt) {
+                                  if (window.__nativeGps) {
+                                      ok(makePos(window.__nativeGps));
+                                  } else {
+                                      origGet(ok, err, opt);
+                                  }
+                              };
+                              navigator.geolocation.watchPosition = function(ok, err, opt) {
+                                  const id = watchSeq++;
+                                  watchers[id] = ok;
+                                  if (window.__nativeGps) ok(makePos(window.__nativeGps));
+                                  return id;
+                              };
+                              navigator.geolocation.clearWatch = function(id) {
+                                  delete watchers[id];
+                              };
+                          }
+
+                          function findOlMap(win) {
+                              try {
+                                  for (const key of Object.keys(win)) {
+                                      const v = win[key];
+                                      if (v && typeof v === 'object' && typeof v.getView === 'function' && typeof v.getLayers === 'function') {
+                                          return v;
+                                      }
+                                  }
+                              } catch(e) {}
+                              return null;
+                          }
+
+                          window.__onNativeGpsUpdate = function(lat, lon, acc, shouldFollow) {
+                              const pos = makePos(window.__nativeGps);
+                              Object.values(watchers).forEach(fn => { try { fn(pos); } catch(e) {} });
+
+                              if (!shouldFollow) return;
+                              try {
+                                  let targetWin = window;
+                                  let olMap = findOlMap(window);
+                                  if (!olMap) {
+                                      const frames = document.querySelectorAll('iframe');
+                                      for (const f of frames) {
+                                          try {
+                                              olMap = findOlMap(f.contentWindow);
+                                              if (olMap) { targetWin = f.contentWindow; break; }
+                                          } catch(e) {}
+                                      }
+                                  }
+                                  if (olMap && targetWin.ol && targetWin.ol.proj) {
+                                      const view = olMap.getView();
+                                      const proj = view.getProjection() ? view.getProjection().getCode() : 'EPSG:3857';
+                                      const coord = targetWin.ol.proj.transform([lon, lat], 'EPSG:4326', proj);
+                                      view.setCenter(coord);
+                                  }
+                              } catch(e) {}
+                          };
+                      })();
+                  """.trimIndent()
+                  webView.evaluateJavascript(js, null)
+              }
+
+              private fun injectSmartMobileScript() {
+                  val enabled = isFullscreenMode
+                  val js = """
+                      (function() {
+                          window.__ogmFullscreenEnabled = $enabled;
+
+                          function applyLayout() {
+                              // Giriş ekranındaysak hiçbir şeyi gizleme
+                              if (document.querySelector('input[type="password"]')) return;
+
+                              const styleId = 'ogm-mobile-style';
+                              let style = document.getElementById(styleId);
+                              if (!window.__ogmFullscreenEnabled) {
+                                  if (style) style.remove();
+                                  document.querySelectorAll('[data-ogm-hidden="1"]').forEach(el => {
+                                      el.style.display = '';
+                                      el.removeAttribute('data-ogm-hidden');
+                                  });
+                                  window.dispatchEvent(new Event('resize'));
+                                  return;
+                              }
+
+                              if (!style) {
+                                  style = document.createElement('style');
+                                  style.id = styleId;
+                                  style.textContent = `
+                                      button, .x-btn, .ol-control button, [role="button"], .toolbar img {
+                                          min-width: 38px !important;
+                                          min-height: 38px !important;
+                                      }
+                                      .x-menu-item-text, .x-tree-node-text, label {
+                                          font-size: 14px !important;
+                                      }
+                                  `;
+                                  document.head.appendChild(style);
+                              }
+
+                              // Harita canvas veya iframe alanını bul
+                              const candidates = Array.from(document.querySelectorAll('canvas, iframe'));
+                              let mapEl = null;
+                              let maxArea = 0;
+                              candidates.forEach(el => {
+                                  const r = el.getBoundingClientRect();
+                                  const area = r.width * r.height;
+                                  if (area > maxArea && r.width > 200 && r.height > 200) {
+                                      maxArea = area;
+                                      mapEl = el;
+                                  }
+                              });
+
+                              if (!mapEl) return;
+
+                              // Sol ORBİS ana menüsü ve üst mavi başlık barını sezgisel olarak gizle
+                              const allBlocks = document.querySelectorAll('nav, aside, header, div');
+                              allBlocks.forEach(el => {
+                                  if (el.contains(mapEl) || mapEl.contains(el)) return;
+                                  const r = el.getBoundingClientRect();
+                                  if (r.width === 0 || r.height === 0) return;
+
+                                  const isLeftSidebar = (r.left <= 5 && r.width > 120 && r.width < 340 && r.height > window.innerHeight * 0.6);
+                                  const isTopHeader = (r.top <= 5 && r.height > 25 && r.height < 95 && r.width > window.innerWidth * 0.7);
+
+                                  if (isLeftSidebar || isTopHeader) {
+                                      el.style.display = 'none';
+                                      el.setAttribute('data-ogm-hidden', '1');
+                                  }
+                              });
+
+                              window.dispatchEvent(new Event('resize'));
+                          }
+
+                          applyLayout();
+                          setTimeout(applyLayout, 1500);
+                          setTimeout(applyLayout, 3500);
+
+                          if (!window.__ogmObserverAttached) {
+                              window.__ogmObserverAttached = true;
+                              window.addEventListener('hashchange', () => setTimeout(applyLayout, 1200));
+                          }
+                      })();
+                  """.trimIndent()
+                  webView.evaluateJavascript(js, null)
+              }
+
+              private fun runDomInspector() {
+                  val js = """
+                      (function() {
+                          const info = {
+                              url: window.location.href,
+                              iframes: Array.from(document.querySelectorAll('iframe')).map(f => ({ id: f.id, cls: f.className, src: f.src })),
+                              canvases: Array.from(document.querySelectorAll('canvas')).map(c => ({ id: c.id, cls: c.className, w: c.width, h: c.height })),
+                              hasOL: typeof window.ol !== 'undefined',
+                              hasLeaflet: typeof window.L !== 'undefined',
+                              hasExt: typeof window.Ext !== 'undefined',
+                              topIds: Array.from(document.querySelectorAll('[id]')).slice(0, 40).map(e => e.tagName + '#' + e.id + '.' + e.className)
+                          };
+                          AndroidBridge.onDomReport(JSON.stringify(info, null, 2));
+                      })();
+                  """.trimIndent()
+                  webView.evaluateJavascript(js, null)
+              }
+
+              inner class AndroidBridge {
+                  @JavascriptInterface
+                  fun onDomReport(report: String) {
+                      runOnUiThread {
+                          val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                          clipboard.setPrimaryClip(ClipData.newPlainText("OGM_DOM_Report", report))
+                          Toast.makeText(this@MainActivity, "Arayüz raporu panoya kopyalandı.", Toast.LENGTH_LONG).show()
+                      }
+                  }
+              }
+
+              override fun onPause() {
+                  super.onPause()
+                  CookieManager.getInstance().flush()
+              }
+
+              override fun onDestroy() {
+                  stopGpsTracking()
+                  super.onDestroy()
+              }
+          }
+          EOF
+
+      - name: Build Debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OGM-Geoportal-Mobile-v1.0
+          path: app/build/outputs/apk/debug/app-debug.apk
